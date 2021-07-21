@@ -1,0 +1,108 @@
+---
+title: "PubTree - Explore scientific publications and their relationship"
+output: 
+  flexdashboard::flex_dashboard:
+    theme: 
+      bootswatch: sandstone
+    orientation: columns
+    vertical_layout: fill
+runtime: shiny
+---
+
+```{r setup, include=FALSE}
+library(flexdashboard)
+library(shiny)
+library(igraph)
+source("functions.R")
+library(ggraph)
+library(xml2)
+# library(shiny.fluent)
+```
+
+Search {.sidebar}
+-----------------------------------------------------------------------
+
+```{r}
+textInput("PMID", label = "Enter PMID", value = "30426166")
+actionButton("go", "press")
+data <- reactiveValues()
+observeEvent(input$go, {
+  data$data <- getInfo(id = input$PMID)
+  
+  data$g <- graph_from_data_frame(data$data$df)
+  data$data$meta <- data$data$meta[match(V(data$g)$name, 
+                                         data$data$meta$PMID),]
+  
+  V(data$g)$citations <- data$data$meta$citations+.2
+  V(data$g)$title <- data$data$meta$title
+  V(data$g)$journal <- data$data$meta$journal
+  V(data$g)$abstract <- data$data$meta$abstract
+  V(data$g)$language <- data$data$meta$language
+  V(data$g)$author <- data$data$meta$author
+  V(data$g)$group <- data$data$meta$group
+  V(data$g)$year <- data$data$meta$year
+  
+})
+```
+
+***Disclaimer*** These results do not represent all scientific articles, they only include articles that are freely availble on PubMed and which have a Pubmed ID (PMID)
+
+Column {data-width=100%}
+-----------------------------------------------------------------------
+
+### Pubmed citation network
+
+```{r}
+observeEvent(input$go,{
+  # set.seed(42)
+  data$gg <- create_layout(data$g, layout = 'tree')
+  
+  output$plot <- renderPlot({
+    ggraph(data$gg) + 
+      geom_edge_link(aes(colour = type),
+                     show.legend = T, 
+                     arrow = arrow(length = unit(2, 'mm'))) + 
+      geom_node_point(aes(size = citations, color = group)) +
+      theme_void() +
+      theme(legend.position = "right")
+  })
+})
+
+plotOutput("plot", 
+           # hover = "plotHover", 
+           click = "plotClick")
+```
+
+Column {data-width=65%}
+-----------------------------------------------------------------------
+
+### Article meta data
+
+```{r}
+observeEvent(input$plotClick,{
+  data$article <- nearPoints(data$gg,
+                             input$plotClick,
+                             maxpoints = 1, threshold = 40)
+  updateTextInput(session, "PMID", value = data$article$name)
+  
+  output$header <- renderTable(data.frame(Title = data$article$title,
+                                          Journal = data$article$journal,
+                                          Authors = data$article$author, 
+                                          Year = data$article$year,
+                                          Language = data$article$language
+                                          ))
+  output$abstract <- renderText(
+    # data.frame(
+    #   Abstract = )
+    data$article$abstract
+    )
+})
+tableOutput("header")
+```
+
+### Abstract 
+
+```{r}
+textOutput("abstract")
+```
+
