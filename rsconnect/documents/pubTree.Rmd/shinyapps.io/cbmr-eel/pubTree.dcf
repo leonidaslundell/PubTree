@@ -1,0 +1,13 @@
+name: pubTree
+title: pubTree
+username:
+account: cbmr-eel
+server: shinyapps.io
+hostUrl: https://api.shinyapps.io/v1
+appId: 4407767
+bundleId: 4871496
+url: https://cbmr-eel.shinyapps.io/pubTree/
+when: 1627637191.94619
+lastSyncTime: 1627637191.9462
+asMultiple: FALSE
+asStatic: FALSE
