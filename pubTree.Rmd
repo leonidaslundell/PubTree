@@ -1,108 +1,300 @@
 ---
-title: "PubTree - Explore scientific publications and their relationship"
+title: "PubTree - Explore scientific publications and their relationships"
 output: 
   flexdashboard::flex_dashboard:
     theme: 
       bootswatch: sandstone
-    orientation: columns
     vertical_layout: fill
 runtime: shiny
 ---
 
 ```{r setup, include=FALSE}
+# orientation: rows
 library(flexdashboard)
 library(shiny)
+library(shinyWidgets)
 library(igraph)
-source("functions.R")
 library(ggraph)
 library(xml2)
-# library(shiny.fluent)
+source("functions.R")
+```
+
+```{r}
+library(GAlogger)
+ga_set_tracking_id(as.character(read.table("bigBrother.txt", header = F)))
+ga_collect_pageview(page = "/start")
 ```
 
 Search {.sidebar}
 -----------------------------------------------------------------------
 
+Current article
+
+```{r}
+textOutput("currentTitle")
+```
+
+<hr>
+
 ```{r}
 textInput("PMID", label = "Enter PMID", value = "30426166")
-actionButton("go", "press")
+actionButton("go", "Retrieve publication")
 data <- reactiveValues()
+
 observeEvent(input$go, {
-  data$data <- getInfo(id = input$PMID)
   
-  data$g <- graph_from_data_frame(data$data$df)
-  data$data$meta <- data$data$meta[match(V(data$g)$name, 
-                                         data$data$meta$PMID),]
+  ga_collect_event(event_category = "Start", event_action = "Searching PMID")
   
-  V(data$g)$citations <- data$data$meta$citations+.2
-  V(data$g)$title <- data$data$meta$title
-  V(data$g)$journal <- data$data$meta$journal
-  V(data$g)$abstract <- data$data$meta$abstract
-  V(data$g)$language <- data$data$meta$language
-  V(data$g)$author <- data$data$meta$author
-  V(data$g)$group <- data$data$meta$group
-  V(data$g)$year <- data$data$meta$year
+  if(is.null(data$i)){
+    data$i <- 1
+    data$data <- NULL
+  }else{
+    data$i <- 1 + data$i
+  }
   
+  data$data[[data$i]] <- getInfo(id = input$PMID) |> 
+    withProgress(message = "Downloading information", 
+                 value = .5) |> 
+    try()
+  
+  if(class(data$data[[data$i]]) == "try-error"){
+    
+    ga_collect_event(event_category = "Start", event_action = "Error in getInfo")
+    
+    showNotification("Something went wrong, try again or try different article")
+    
+    if(length(data$data)>1){
+      if(data$i == 1){
+        data$data[[data$i]] <- NULL
+      }else{
+        data$data[[data$i]] <- NULL
+        data$i <- data$i - 1
+      }
+    }else{
+      data$data <- NULL
+      data$i <- data$i - 1
+      output$plot <- renderPlot(
+          ggplot() +
+            geom_text(aes(label="Something went wrong.\nTry again or try different PMID", x = 1, y = 1)) +
+            theme_void())
+    }
+    
+  }
 })
 ```
 
-***Disclaimer*** These results do not represent all scientific articles, they only include articles that are freely availble on PubMed and which have a Pubmed ID (PMID)
+<hr>
 
-Column {data-width=100%}
+Previous articles
+
+```{r}
+actionButton("back", 
+             label = HTML("<span class='small'><i class='glyphicon glyphicon-arrow-left'></i> Back</span>"))
+actionButton("delete", 
+             label = HTML("<span class='small'></span><i class='glyphicon glyphicon-trash'></i>"))
+actionButton("forward", 
+             label = HTML("<span class='small'>Forward </span><i class='glyphicon glyphicon-arrow-right'></i>"))
+
+
+observeEvent(input$back,{
+  req(data$i)
+  if(data$i>1){
+    data$i <- data$i - 1
+  }
+})
+observeEvent(input$delete,{
+  req(data$i)
+  if(length(data$data)>1){
+    if(data$i == 1){
+      print(data$i)
+      data$data[[data$i]] <- NULL
+    }else{
+      data$data[[data$i]] <- NULL
+      data$i <- data$i - 1
+    }
+  }
+})
+observeEvent(input$forward, {
+  req(data$i)
+  if (data$i < length(data$data)) {
+    data$i <- data$i + 1
+  }
+})
+```
+
+```{r}
+tableOutput("table")
+
+output$table <- renderTable({
+  req(data$data)
+  listArticles <- sapply(data$data, \(x) x$meta$title[x$meta$order == "root"])
+  listArticles <- data.frame(order = 1:length(listArticles), 
+                             title = stringr:: str_trunc(listArticles, 20, "right"))
+  colnames(listArticles) <- NULL
+  if(nrow(listArticles)>5){
+    return(listArticles[(nrow(listArticles) - 5):nrow(listArticles)])
+  }else{
+      return(listArticles)
+  }
+})
+```
+
+```{r}
+downloadLink("downloadData", "Download articles")
+```
+
+```{r}
+output$downloadData <- downloadHandler(
+  filename = function() {
+    req(data$data)
+    paste0(Sys.Date(), ".xlsx", sep = "")
+  },
+  content = function(file) {
+    x <- lapply(data$data, \(x) x$meta[x$meta$order == "root",])
+    x <- Reduce(rbind, x)
+    x[is.na(x)] <- "Not available"
+    x$FulltextUrl <- paste0("https://pubmed.ncbi.nlm.nih.gov/", x$PMID)
+    
+    openxlsx::write.xlsx(x = x, file = file)
+  }
+)
+
+```
+
+<hr>
+
+```{r, height = 50}
+sliderInput(
+  "size",
+  "Node size",
+  min = 0.5,
+  max = 4,
+  step = .2,
+  value = 2
+)
+```
+
+<hr>
+
+```{r}
+radioButtons(inputId = "summarize", 
+             label = "View", 
+             choices = c("Focus", "Overview"), 
+             selected = "Focus", 
+             width = "20%")
+```
+
+<hr>
+
+***Disclaimer*** these results do not represent all scientific articles. They only include articles that are freely availble on PubMed and which have a Pubmed ID (PMID). There is also a 200 article limit on the number of articles presented. 
+
+Column {data-width=1000, data-height=1000}
 -----------------------------------------------------------------------
+
+```{r}
+#instructions
+output$plot <- renderPlot(
+      ggplot() + 
+        geom_text(aes(label="Start with an intresting article.\nExplore its context.", x = 1, y = 1), size = 12) + 
+        theme_void())
+```
 
 ### Pubmed citation network
 
-```{r}
-observeEvent(input$go,{
-  # set.seed(42)
-  data$gg <- create_layout(data$g, layout = 'tree')
+```{r, }
+observeEvent(input$go|input$forward|input$back|input$delete|as.numeric(as.factor(input$summarize)),{#
+  Sys.sleep(.1)
+  req(data$i)
+  req(data$data[[data$i]])
+  output$currentTitle <- renderText(data$data[[data$i]]$meta[data$data[[data$i]]$meta$order == "root",
+                                                             "title"])
   
-  output$plot <- renderPlot({
-    ggraph(data$gg) + 
-      geom_edge_link(aes(colour = type),
-                     show.legend = T, 
-                     arrow = arrow(length = unit(2, 'mm'))) + 
-      geom_node_point(aes(size = citations, color = group)) +
-      theme_void() +
-      theme(legend.position = "right")
-  })
+  if(input$summarize == "Overview"){
+    
+    ga_collect_event(event_category = "Exploration", event_action = "Viewed in Overview mode")
+    
+    data$gg <- net(citations = data$data, layout = "other")
+    output$plot <- renderPlot({
+      gg <- plotNet(
+        data$gg,
+        maxSize = max(data$data[[data$i]]$meta$citations),
+        nodeSize = input$size
+      )
+      return(gg)
+    })
+  }else{
+    
+    data$gg <- net(citations = data$data[[data$i]])
+    output$plot <- renderPlot({
+      gg <- plotNet(
+        data$gg,
+        maxSize = max(data$data[[data$i]]$meta$citations),
+        nodeSize = input$size
+      )
+      return(gg)
+    })
+  }
+  
 })
-
-plotOutput("plot", 
-           # hover = "plotHover", 
-           click = "plotClick")
+  
+plotOutput("plot", click = "plotClick")
 ```
 
-Column {data-width=65%}
+Column  {data-width=1000}
 -----------------------------------------------------------------------
-
-### Article meta data
 
 ```{r}
 observeEvent(input$plotClick,{
+  
+  ga_collect_event(event_category = "Exploration", event_action = "Clicked on node")
+  
   data$article <- nearPoints(data$gg,
                              input$plotClick,
-                             maxpoints = 1, threshold = 40)
+                             maxpoints = 1, 
+                             threshold = 40)
+  
+  if(nrow(data$article) == 0){
+    data$article <- data$data[[data$i]]$meta[data$data[[data$i]]$meta$order == "root",]
+  }
+  
   updateTextInput(session, "PMID", value = data$article$name)
   
-  output$header <- renderTable(data.frame(Title = data$article$title,
-                                          Journal = data$article$journal,
-                                          Authors = data$article$author, 
-                                          Year = data$article$year,
-                                          Language = data$article$language
-                                          ))
-  output$abstract <- renderText(
-    # data.frame(
-    #   Abstract = )
-    data$article$abstract
-    )
+  tbl <- data.frame(Title = stringr::str_trunc(data$article$title, 200, "right"),
+                    Journal = data$article$journal,
+                    Authors = data$article$author, 
+                    Year = data$article$year,
+                    Language = data$article$language,
+                    Citations = round(data$article$citations - 0.2, digits = 0)
+  )
+  colnames(tbl)[2] <- "Journal"#some returns make the colname null?
+  
+  output$header <- renderTable(tbl)
+  output$abstract <- renderText(data$article$abstract)
 })
-tableOutput("header")
 ```
 
-### Abstract 
+### 
+
+```{r,fig.height=30}
+fluidPage(tableOutput("header"))
+```
+
+<br>
 
 ```{r}
+observeEvent(input$plotClick,{
+  output$link <- renderUI(tags$a(href = paste0("https://pubmed.ncbi.nlm.nih.gov/", input$PMID),
+                                 target="_blank", 
+                                 "Full text article"))
+})
+
+uiOutput("link")
+```
+
+### Abstract
+
+```{r,fig.height=70}
 textOutput("abstract")
+# span(textOutput("abstract"), style="color:red")
 ```
 
