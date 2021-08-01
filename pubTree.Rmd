@@ -16,6 +16,7 @@ library(shinyWidgets)
 library(igraph)
 library(ggraph)
 library(xml2)
+library(mclust)
 source("functions.R")
 ```
 
@@ -39,6 +40,7 @@ textOutput("currentTitle")
 ```{r}
 textInput("PMID", label = "Enter PMID", value = "30426166")
 actionButton("go", "Retrieve publication")
+
 data <- reactiveValues()
 
 observeEvent(input$go, {
@@ -56,12 +58,16 @@ observeEvent(input$go, {
     withProgress(message = "Downloading information", 
                  value = .5) |> 
     try()
-  
+  print(data$data[[data$i]])
   if(class(data$data[[data$i]]) == "try-error"){
     
     ga_collect_event(event_category = "Start", event_action = "Error in getInfo")
     
     showNotification("Something went wrong, try again or try different article")
+    output$plot <- renderPlot(
+          ggplot() +
+            geom_text(aes(label="Something went wrong.\nTry again or try different PMID", x = 1, y = 1)) +
+            theme_void())
     
     if(length(data$data)>1){
       if(data$i == 1){
@@ -73,10 +79,6 @@ observeEvent(input$go, {
     }else{
       data$data <- NULL
       data$i <- data$i - 1
-      output$plot <- renderPlot(
-          ggplot() +
-            geom_text(aes(label="Something went wrong.\nTry again or try different PMID", x = 1, y = 1)) +
-            theme_void())
     }
     
   }
