@@ -403,7 +403,7 @@ net <- function(results, layout = "tree"){
   
   #cant put these in the authorgroup function since it works on the ggraph object
   gg$authorGroups <- as.factor(gg$authorGroups)
-  if(any(levels(gg$authorGroups == "none")))
+  if(any(levels(gg$authorGroups) == "none"))
     gg$authorGroups <- relevel(gg$authorGroups, ref = "none")
 
   gg$meshTerms <- as.factor(gg$meshTerms)
