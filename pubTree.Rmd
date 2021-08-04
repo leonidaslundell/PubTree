@@ -20,10 +20,11 @@ library(mclust)
 source("functions.R")
 ```
 
-```{r}
+```{r, include=F}
 library(GAlogger)
 ga_set_tracking_id(as.character(read.table("bigBrother.txt", header = F)))
 ga_collect_pageview(page = "/start")
+ga_set_approval(consent = TRUE)
 ```
 
 Search {.sidebar}
@@ -58,7 +59,7 @@ observeEvent(input$go, {
     withProgress(message = "Downloading information", 
                  value = .5) |> 
     try()
-  print(data$data[[data$i]])
+  
   if(class(data$data[[data$i]]) == "try-error"){
     
     ga_collect_event(event_category = "Start", event_action = "Error in getInfo")
@@ -66,7 +67,8 @@ observeEvent(input$go, {
     showNotification("Something went wrong, try again or try different article")
     output$plot <- renderPlot(
           ggplot() +
-            geom_text(aes(label="Something went wrong.\nTry again or try different PMID", x = 1, y = 1)) +
+            geom_text(aes(label="Something went wrong.\nTry again or try different PMID", 
+                          x = 1, y = 1)) +
             theme_void())
     
     if(length(data$data)>1){
@@ -99,12 +101,16 @@ actionButton("forward",
 
 
 observeEvent(input$back,{
+  ga_collect_event(event_category = "Nav", event_action = "Navigating back and forth")
+  
   req(data$i)
   if(data$i>1){
     data$i <- data$i - 1
   }
 })
 observeEvent(input$delete,{
+  ga_collect_event(event_category = "Nav", event_action = "Deleting")
+  
   req(data$i)
   if(length(data$data)>1){
     if(data$i == 1){
@@ -117,6 +123,8 @@ observeEvent(input$delete,{
   }
 })
 observeEvent(input$forward, {
+  ga_collect_event(event_category = "Nav", event_action = "Navigating back and forth")
+
   req(data$i)
   if (data$i < length(data$data)) {
     data$i <- data$i + 1
@@ -160,7 +168,6 @@ output$downloadData <- downloadHandler(
     openxlsx::write.xlsx(x = x, file = file)
   }
 )
-
 ```
 
 <hr>
@@ -190,6 +197,12 @@ radioButtons(inputId = "summarize",
 
 ***Disclaimer*** these results do not represent all scientific articles. They only include articles that are freely availble on PubMed and which have a Pubmed ID (PMID). There is also a 200 article limit on the number of articles presented. 
 
+**Data sources:** Pubmed central API
+
+**Author:** Leonidas Lundell PhD
+
+**Email:** leonidas.lundell@gmail.com
+
 Column {data-width=1000, data-height=1000}
 -----------------------------------------------------------------------
 
@@ -197,11 +210,33 @@ Column {data-width=1000, data-height=1000}
 #instructions
 output$plot <- renderPlot(
       ggplot() + 
-        geom_text(aes(label="Start with an intresting article.\nExplore its context.", x = 1, y = 1), size = 12) + 
+        geom_text(aes(label="Start with an intresting article.\nExplore its context.", 
+                      x = 1, y = 0), size = 12) + 
         theme_void())
 ```
 
 ### Pubmed citation network
+
+```{r}
+#zoom
+observeEvent(input$zoomClick, {
+  req(data$i)
+  brush <- input$zoomRange
+  if (!is.null(brush)) {
+    ga_collect_event(event_category = "View", event_action = "Zoom in")
+    
+    ranges$x <- c(brush$xmin, brush$xmax)
+    ranges$y <- c(brush$ymin, brush$ymax)
+    
+  } else {
+    ga_collect_event(event_category = "View", event_action = "Zoom out")
+    
+    ranges$x <- NULL
+    ranges$y <- NULL
+  }
+})
+```
+
 
 ```{r, }
 observeEvent(input$go|input$forward|input$back|input$delete|as.numeric(as.factor(input$summarize)),{#
@@ -212,34 +247,52 @@ observeEvent(input$go|input$forward|input$back|input$delete|as.numeric(as.factor
                                                              "title"])
   
   if(input$summarize == "Overview"){
+    ga_collect_event(event_category = "View", event_action = "Viewed in Overview mode")
     
-    ga_collect_event(event_category = "Exploration", event_action = "Viewed in Overview mode")
+    data$gg <- net(results = data$data, layout = "other") |> 
+      withProgress(message = "Clustering articles", 
+                   value = .5)
     
-    data$gg <- net(citations = data$data, layout = "other")
     output$plot <- renderPlot({
       gg <- plotNet(
-        data$gg,
+        ggDat = data$gg,
         maxSize = max(data$data[[data$i]]$meta$citations),
-        nodeSize = input$size
+        nodeSize = input$size,
+        y = ranges$x,
+        x = ranges$y
       )
       return(gg)
     })
   }else{
+    ga_collect_event(event_category = "View", event_action = "Viewed in Standard mode")
     
-    data$gg <- net(citations = data$data[[data$i]])
+    data$gg <- net(results = data$data[[data$i]]) |> 
+      withProgress(message = "Clustering articles", 
+                   value = .5)
+    
     output$plot <- renderPlot({
       gg <- plotNet(
         data$gg,
         maxSize = max(data$data[[data$i]]$meta$citations),
-        nodeSize = input$size
+        nodeSize = input$size,
+        y = ranges$x,
+        x = ranges$y
       )
       return(gg)
     })
   }
   
 })
-  
-plotOutput("plot", click = "plotClick")
+
+ranges <- reactiveValues(x = NULL, y = NULL)
+
+plotOutput("plot", 
+           click = "plotClick",
+           dblclick = "zoomClick",
+           brush = brushOpts(
+             id = "zoomRange",
+             resetOnNew = TRUE
+           ))
 ```
 
 Column  {data-width=1000}
@@ -247,8 +300,8 @@ Column  {data-width=1000}
 
 ```{r}
 observeEvent(input$plotClick,{
-  
-  ga_collect_event(event_category = "Exploration", event_action = "Clicked on node")
+  req(data$i)
+  ga_collect_event(event_category = "View", event_action = "Clicked on node")
   
   data$article <- nearPoints(data$gg,
                              input$plotClick,
@@ -256,14 +309,16 @@ observeEvent(input$plotClick,{
                              threshold = 40)
   
   if(nrow(data$article) == 0){
-    data$article <- data$data[[data$i]]$meta[data$data[[data$i]]$meta$order == "root",]
+    PMID <- data$data[[data$i]]$meta[data$data[[data$i]]$meta$order == "root", "PMID"]
+    data$article <- data$gg[data$gg$name == PMID, ]
   }
   
   updateTextInput(session, "PMID", value = data$article$name)
   
   tbl <- data.frame(Title = stringr::str_trunc(data$article$title, 200, "right"),
                     Journal = data$article$journal,
-                    Authors = data$article$author, 
+                    Type = data$article$type,
+                    Authors = data$article$author,
                     Year = data$article$year,
                     Language = data$article$language,
                     Citations = round(data$article$citations - 0.2, digits = 0)
@@ -285,6 +340,7 @@ fluidPage(tableOutput("header"))
 
 ```{r}
 observeEvent(input$plotClick,{
+  req(data$i)
   output$link <- renderUI(tags$a(href = paste0("https://pubmed.ncbi.nlm.nih.gov/", input$PMID),
                                  target="_blank", 
                                  "Full text article"))
