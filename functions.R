@@ -69,7 +69,9 @@ getInfo <- function(id){
   resultsDFmeta$language <- sapply(resultsMeta, \(x) x$language)
   resultsDFmeta$journal <- sapply(resultsMeta, \(x) x$journal)
   resultsDFmeta$type <- sapply(resultsMeta, \(x) paste0(x$type, collapse = "/"))
-  resultsDFmeta$author <- sapply(resultsMeta, \(x) paste0(x$author, collapse = ", "))
+  resultsDFmeta$authorNames <- sapply(resultsMeta, \(x) paste0(x$author, collapse = ", "))
+  resultsDFmeta$author <- sapply(resultsMeta, \(x) x$author)
+  resultsDFmeta$meshTerms <- sapply(resultsMeta, \(x) x$meshTerms)
   resultsDFmeta$year <- sapply(resultsMeta, \(x){
     if(length(x$year)==0)
       return("NA")
@@ -81,11 +83,6 @@ getInfo <- function(id){
   resultsDFmeta$order[resultsDFmeta$PMID == id] <- "root"
   resultsDFmeta$order <- as.factor(resultsDFmeta$order)
   
-  ####################################################
-  #author and mesh distance
-  resultsDFmeta$authorGroups <- authorGroup(results = resultsMeta)
-  resultsDFmeta$meshTerms <- meshClustering(results = resultsMeta)
-
   return(list(df = resultsDF, meta = resultsDFmeta))
 }
 
@@ -252,19 +249,18 @@ authorGroup <- function(results){
     length(intersect(x, y))/length(unique(c(x, y)))
   }
   
-  xx <- matrix(NA, length(results), length(results))
-  colnames(xx) <- rownames(xx) <- names(results)
+  xx <- matrix(NA, nrow(results), nrow(results))
+  colnames(xx) <- rownames(xx) <- results$PMID
   
   for(x in colnames(xx)){
     for(y in colnames(xx)){
-      xx[x, y] <- 1 - ji(x = results[[x]]$author,
-                         y = results[[y]]$author)
+      xx[x, y] <- 1 - ji(x = results[results$PMID == x,]$author[[1]],
+                         y = results[results$PMID == y,]$author[[1]])
     }
   }
   xx[is.na(xx)] <- 0
   
   if(any(xx != 0)){
-    
     xxDist <- hclust(as.dist(xx), method = "complete")
     group <- cutree(xxDist, h = rev(unique(xxDist$height))[2])
     
@@ -274,8 +270,10 @@ authorGroup <- function(results){
       "none"
     
     for(i in groupName){
-      authors <- lapply(results[group == i], 
-                        \(x) x$author)
+      authors <- lapply(results[group == i, "author"], 
+                        \(x) x)
+      # authors <- unlist(authors)
+      
       if(length(Reduce(intersect, authors))>0){
         authorsReduced <- Reduce(intersect, authors)
       }else{
@@ -283,7 +281,7 @@ authorGroup <- function(results){
       }
       
       #if there more than 2 authors, take the most common ones and the rest et al.
-      if(length(authorsReduced)>2){
+      if(length(authorsReduced)>=2){
         authors <- authors |> unlist() |> table() |> sort() |> tail(n=2) |> names()
         authorsReduced <- intersect(authorsReduced, authors)
         authorsReduced <- paste0(paste0(authorsReduced, collapse = ", "), ", et al.")
@@ -304,19 +302,19 @@ authorGroup <- function(results){
 #mesh clustering
 
 meshClustering <- function(results){
-  nullTerms <- names(results)[sapply(results, \(x) length(x$meshTerms))==0]
+  nullTerms <- results[sapply(results$meshTerms, \(x) length(x))==0, "PMID"]
   
   ji <- function(x, y){
     length(intersect(x, y))/length(unique(c(x, y)))
   }
   
-  xx <- matrix(NA, length(results), length(results))
-  colnames(xx) <- rownames(xx) <- names(results)
+  xx <- matrix(NA, nrow(results), nrow(results))
+  colnames(xx) <- rownames(xx) <- results$PMID
   
   for(x in colnames(xx)){
     for(y in colnames(xx)){
-      xx[x, y] <- 1 - ji(x = names(results[[x]]$meshTerms),
-                         y = names(results[[y]]$meshTerms))
+      xx[x, y] <- 1 - ji(x = names(results[results$PMID == x,]$meshTerms[[1]]),
+                         y = names(results[results$PMID == y,]$meshTerms[[1]]))
     }
   }
   xx[is.na(xx)] <- 0
@@ -325,16 +323,16 @@ meshClustering <- function(results){
     
     group <- Mclust(as.dist(xx))$classification
     
-    meshNames <- sapply(results, 
-                        \(x) x$meshTerms)
-    meshNames <- Reduce(c, meshNames)
+    meshNames <- Reduce(c, results$meshTerms)
+    meshNames <- meshNames[unique(names(meshNames))]
     
     for(i in 1:max(group)){
-      groupTerm <- lapply(results[group == i], 
-                          \(x) names(x$meshTerms)) |> 
+      groupTerm <- lapply(results[group == i,"meshTerms"], 
+                          \(x) names(x)) |> 
         unlist() |> table() |> sort() |> tail()
       
-      group[group %in% i] <- meshNames[names(groupTerm)] |> unique() |> paste0(collapse = ", ")
+      group[group %in% i] <- paste0(meshNames[names(groupTerm)] |> unique() |> paste0(collapse = "\n"),
+                                    "\n")
     }
     group[nullTerms] <- "no MESH terms"
   }else{
@@ -347,48 +345,51 @@ meshClustering <- function(results){
 ####################################################
 #create igraph
 
-net <- function(citations, layout = "tree"){
+net <- function(results, layout = "tree"){
   
   if(layout != "tree"){
-    citations <- list(df = Reduce(rbind,
-                                  lapply(citations, \(i) {
+    results <- list(df = Reduce(rbind,
+                                  lapply(results, \(i) {
                                     i$df
                                   })),
                       meta = Reduce(rbind,
-                                    lapply(citations, \(i) {
+                                    lapply(results, \(i) {
                                       i$meta
                                     }))) 
   }
   
+  results$meta$authorGroups <- authorGroup(results = results$meta)
+  results$meta$meshTerms <- meshClustering(results = results$meta)
+  
   #reorder here to have authorGroups next to eachother on plot.
-  citations$df <- citations$df[order(citations$meta$meshTerms),]
-  g <- graph_from_data_frame(citations$df)
-  citations$meta <- citations$meta[match(V(g)$name,
-                                         citations$meta$PMID),]
+  results$df <- results$df[order(results$meta$meshTerms),]
+  g <- graph_from_data_frame(results$df)
+  results$meta <- results$meta[match(V(g)$name,
+                                         results$meta$PMID),]
 
-  V(g)$citations <- citations$meta$citations+.2#0 sized legend otherwise
-  V(g)$title <- citations$meta$title
-  V(g)$journal <- citations$meta$journal
-  V(g)$abstract <- citations$meta$abstract
-  V(g)$language <- citations$meta$language
-  V(g)$author <- citations$meta$author
-  V(g)$authorGroups <- citations$meta$authorGroups
-  V(g)$meshTerms <- citations$meta$meshTerms
-  V(g)$year <- citations$meta$year
-  V(g)$type <- citations$meta$type
+  V(g)$citations <- results$meta$citations+.2#0 sized legend otherwise
+  V(g)$title <- results$meta$title
+  V(g)$journal <- results$meta$journal
+  V(g)$abstract <- results$meta$abstract
+  V(g)$language <- results$meta$language
+  V(g)$author <- results$meta$authorNames
+  V(g)$authorGroups <- results$meta$authorGroups
+  V(g)$meshTerms <- results$meta$meshTerms
+  V(g)$year <- results$meta$year
+  V(g)$type <- results$meta$type
 
   #look into layout here graphlayouts
   
   if(layout == "tree"){
-    if(length(citations$df[citations$df$type == "cited", "from"])>0){
+    if(length(results$df[results$df$type == "cited", "from"])>0){
       gg <- create_layout(g,
                           layout = layout_as_tree(g, 
-                                                  root = citations$df[citations$df$type == "cited","from"])
+                                                  root = results$df[results$df$type == "cited","from"])
       )
     }else{
       gg <- create_layout(g,
                           layout = layout_as_tree(g, 
-                                                  root = citations$df[citations$df$type == "root","from"])
+                                                  root = results$df[results$df$type == "root","from"])
       )
     } 
   }else{
@@ -402,24 +403,18 @@ net <- function(citations, layout = "tree"){
   gg$authorGroups <- as.factor(gg$authorGroups)
   gg$authorGroups <- relevel(gg$authorGroups, ref = "none")
 
-  # # tooManyAuth <- strsplit(levels(gg$authorGroups), split = ",")
-  # # 
-  # # tooManyAuth <- lapply(tooManyAuth, \(x){
-  # #   if(length(x)>2){
-  # #     x[3] <- " et al."
-  # #     return(x[1:3])
-  # #   }
-  # #   return(x)
-  # #   })
-  # levels(gg$authorGroups) <- sapply(tooManyAuth, paste0, collapse = ",")
-  # gg$authorGroups <- relevel(gg$authorGroups, "none")
+  gg$meshTerms <- as.factor(gg$meshTerms)
+  if(any(levels(gg$meshTerms) == "no MESH terms"))
+    gg$meshTerms <- relevel(gg$meshTerms, ref = "no MESH terms")
   
   gg
 }
 
 plotNet <- function(ggDat, 
                     maxSize,
-                    nodeSize){
+                    nodeSize,
+                    x, 
+                    y){
   if (length(levels(ggDat$authorGroups)) > 10) {
     x <- table(ggDat$authorGroups)
     x <- x[names(x) != "none"]
@@ -428,13 +423,13 @@ plotNet <- function(ggDat,
     ggDat$authorGroups <- ggDat$authorGroups |> as.character() |> as.factor()
     ggDat$authorGroups <- relevel(ggDat$authorGroups, "none")
   }
+  # ggDat$Relation <- ggDat$type
   
   gg <- ggraph(ggDat) + 
     geom_edge_diagonal(aes(colour = type),
                        show.legend = T, 
                        arrow = arrow(length = unit(2, 'mm'),
-                                     type = "closed"),
-                       name = "AWSD") + 
+                                     type = "closed")) + 
     geom_node_point(aes(size = citations, 
                         color = meshTerms,
                         shape = authorGroups)) +
@@ -451,6 +446,10 @@ plotNet <- function(ggDat,
                                                     size = 5)),
            shape = guide_legend(override.aes = list(edge_linetype = 0,
                                                     size = 5)),
-           size = guide_legend(override.aes = list(edge_linetype = 0))) #+
-    # labs
+           size = guide_legend(override.aes = list(edge_linetype = 0))) 
+  
+  if(any(!c(is.null(x),is.null(y))))
+    gg <- gg + coord_cartesian(xlim = y, ylim = x, expand = FALSE)#ggraph inverts the brush
+  
+  gg
 }
