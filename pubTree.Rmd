@@ -195,6 +195,18 @@ radioButtons(inputId = "summarize",
 
 <hr>
 
+```{r}
+selectizeInput(inputId = "mesh",
+               label =  "Filter articles by MESH terms", 
+               choices = NULL,
+               selected = NULL, 
+               multiple = T)
+actionButton(inputId = "filter", "Filter")
+actionButton(inputId = "clear", "Clear")
+```
+
+<hr>
+
 ***Disclaimer*** these results do not represent all scientific articles. They only include articles that are freely availble on PubMed and which have a Pubmed ID (PMID). There is also a 200 article limit on the number of articles presented. 
 
 **Data sources:** Pubmed central API
@@ -239,15 +251,45 @@ observeEvent(input$zoomClick, {
 
 
 ```{r, }
-observeEvent(input$go|input$forward|input$back|input$delete|as.numeric(as.factor(input$summarize)),{#
+observeEvent(
+  input$go |
+    input$forward |
+    input$back |
+    input$delete | 
+    input$filter |
+    input$clear |
+    as.numeric(as.factor(input$summarize)),
+  {
+    #
   Sys.sleep(.1)
   req(data$i)
   req(data$data[[data$i]])
+  
+  #update the presented mesh terms
+  meshTerms <- unlist(data$data[[data$i]]$meta$meshTerms, use.names = F)
+  meshID <- unlist(sapply(data$data[[data$i]]$meta$meshTerms, names), 
+                      use.names = F)
+  #different descriptions for the same mesh id
+  meshTerms <- meshTerms[!duplicated(meshID)]
+  meshID <- meshID[!duplicated(meshID)]
+  names(meshID) <- meshTerms
+  
+  updateSelectizeInput(inputId = "mesh",
+                       choices = sort(meshTerms))
+  
+  mesh2article <- sapply(data$data[[data$i]]$meta$meshTerms, names)
+  keep <- meshID[input$mesh]
+  keep <- sapply(mesh2article, \(x) any(x %in% keep))
+  keep[[data$data[[data$i]]$meta[data$data[[data$i]]$meta$order == "root", "PMID"]]] <- TRUE #keep the root
+  
+  #title
   output$currentTitle <- renderText(data$data[[data$i]]$meta[data$data[[data$i]]$meta$order == "root",
                                                              "title"])
   
+  #check if the view is summarized or not
   if(input$summarize == "Overview"){
-    ga_collect_event(event_category = "View", event_action = "Viewed in Overview mode")
+    ga_collect_event(event_category = "View", 
+                     event_action = "Viewed in Overview mode")
     
     data$gg <- net(results = data$data, layout = "other") |> 
       withProgress(message = "Clustering articles", 
@@ -264,11 +306,19 @@ observeEvent(input$go|input$forward|input$back|input$delete|as.numeric(as.factor
       return(gg)
     })
   }else{
-    ga_collect_event(event_category = "View", event_action = "Viewed in Standard mode")
+    ga_collect_event(event_category = "View", 
+                     event_action = "Viewed in Standard mode")
     
-    data$gg <- net(results = data$data[[data$i]]) |> 
-      withProgress(message = "Clustering articles", 
-                   value = .5)
+    if(is.null(input$mesh)){
+      g <- data$data[[data$i]]
+    }else{
+      g <- lapply(data$data[[data$i]], \(x){
+        x[keep, ]
+      })
+    }
+    
+    data$gg <- net(results = g) |> withProgress(message = "Clustering articles",
+                                                value = .5)
     
     output$plot <- renderPlot({
       gg <- plotNet(
@@ -294,6 +344,30 @@ plotOutput("plot",
              resetOnNew = TRUE
            ))
 ```
+
+```{r}
+# observeEvent(input$mesh,{
+#   Sys.sleep(1)
+#   if(!is.null(input$mesh)){
+#     keep <- data$meshTerms[input$mesh]
+#     data$keep <- data$data[[data$i]]
+#     
+#     mesh2article <- sapply(data$data[[data$i]]$meta$meshTerms, names)
+#     keep <- sapply(mesh2article, \(x) any(x %in% keep))
+#     keep[data$keep$meta[data$keep$meta$order == "root","PMID"]] <- TRUE
+#     
+#     data$data[[data$i]]$df <- data$data[[data$i]]$df[keep,]
+#     data$data[[data$i]]$meta <- data$data[[data$i]]$meta[keep,]
+#   }else{
+#     if(!is.null(data$keep)){
+#       data$data[[data$i]] <- data$keep
+#       data$keep <- NULL 
+#     }
+#   }
+#   
+# })
+```
+
 
 Column  {data-width=1000}
 -----------------------------------------------------------------------

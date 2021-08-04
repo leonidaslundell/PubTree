@@ -260,8 +260,10 @@ authorGroup <- function(results){
   }
   xx[is.na(xx)] <- 0
   
-  if(any(xx != 0)){
-    xxDist <- hclust(as.dist(xx), method = "complete")
+  xxDist <- try(hclust(as.dist(xx), method = "complete"))
+  
+  if(any(xx != 0)&length(unique(xxDist$height))>1){
+    
     group <- cutree(xxDist, h = rev(unique(xxDist$height))[2])
     
     groupName <- table(group) |> sort() |> tail(n = 9) |> names()
@@ -292,7 +294,7 @@ authorGroup <- function(results){
       group[group %in% i] <- authorsReduced
     }
   }else{
-    group <- rep("none", length(results))
+    group <- rep("none", nrow(results))
   }
   
   return(group)
@@ -401,7 +403,8 @@ net <- function(results, layout = "tree"){
   
   #cant put these in the authorgroup function since it works on the ggraph object
   gg$authorGroups <- as.factor(gg$authorGroups)
-  gg$authorGroups <- relevel(gg$authorGroups, ref = "none")
+  if(any(levels(gg$authorGroups == "none")))
+    gg$authorGroups <- relevel(gg$authorGroups, ref = "none")
 
   gg$meshTerms <- as.factor(gg$meshTerms)
   if(any(levels(gg$meshTerms) == "no MESH terms"))
