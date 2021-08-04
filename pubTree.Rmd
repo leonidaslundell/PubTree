@@ -312,6 +312,7 @@ observeEvent(
     if(is.null(input$mesh)){
       g <- data$data[[data$i]]
     }else{
+      ga_collect_event(event_category = "View", event_action = "Filtered mesh")
       g <- lapply(data$data[[data$i]], \(x){
         x[keep, ]
       })
